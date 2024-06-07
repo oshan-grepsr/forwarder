@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,6 +30,10 @@ import (
 	"github.com/saucelabs/forwarder/internal/martian/mitm"
 	"github.com/saucelabs/forwarder/internal/martian/proxyutil"
 	"golang.org/x/net/http/httpguts"
+)
+
+const (
+	delim = "~~grep~~"
 )
 
 // Proxy is an HTTP proxy with support for TLS MITM and customizable behavior.
@@ -319,6 +324,21 @@ func (p *Proxy) shouldMITM(req *http.Request) bool {
 	return true
 }
 
+func (p *Proxy) sliceDelimFromURL(req http.Request, delim string) (*http.Request, error) {
+	if strings.Contains(req.URL.String(), delim) {
+		_url, _, ok := strings.Cut(req.URL.String(), delim)
+
+		if ok {
+			var err error
+			req.URL, err = url.Parse(_url)
+
+			return &req, err
+		}
+	}
+
+	return &req, nil
+}
+
 const terminateTLSHeader = "X-Martian-Terminate-TLS"
 
 func shouldTerminateTLS(req *http.Request) bool {
@@ -355,7 +375,13 @@ func (p *Proxy) roundTrip(req *http.Request) (*http.Response, error) {
 		return proxyutil.NewResponse(200, http.NoBody, req), nil
 	}
 
-	return p.rt.RoundTrip(req)
+	copyReq, err := p.sliceDelimFromURL(*req, delim)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return p.rt.RoundTrip(copyReq)
 }
 
 func (p *Proxy) errorResponse(req *http.Request, err error) *http.Response {
